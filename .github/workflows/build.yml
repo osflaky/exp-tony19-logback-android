@@ -1,0 +1,91 @@
+name: Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (JDK ${{ matrix.java }}) [${{ matrix.expander_leg }}]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # build across both modern LTS JDKs; the published artifacts are
+        # made JDK-specific by their compile targets:
+        #   logback-android      -> Java 11 bytecode, minSdk 26
+        #   logback-android-jdk8 -> Java 8 bytecode, minSdk 21
+        #
+        # agp: the Android Gradle Plugin version to build with (overrides the
+        # gradle.properties default). AGP 9.3.0+ lint requires JDK 21, so JDK 17
+        # stays on 9.2.1 while JDK 21 exercises the newer plugin.
+        include:
+        - os: macos-latest
+          arch: arm64
+          runner: macos-latest
+          expander_leg: macos-latest--arm64
+    env:
+      ORG_GRADLE_PROJECT_agpVersion: ${{ matrix.agp }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+
+    - name: Set up JDK ${{ matrix.java }}
+      uses: actions/setup-java@v5
+      with:
+        distribution: temurin
+        java-version: ${{ matrix.java }}
+
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v6.3.0
+
+    - name: Assemble all JDK variants
+      run: ./gradlew assembleRelease
+
+    - name: Verify bytecode targets
+      run: |
+        set -eux
+        check() {
+          aar="$1"; want="$2"
+          dir=$(mktemp -d)
+          unzip -q "$aar" classes.jar -d "$dir"
+          unzip -q "$dir/classes.jar" 'ch/qos/logback/classic/Logger.class' -d "$dir"
+          # class-file major version: low byte of the big-endian u16 at offset 6
+          major=$(od -An -j7 -N1 -tu1 "$dir/ch/qos/logback/classic/Logger.class" | tr -d ' ')
+          test "$major" = "$want"
+        }
+        # class file major version: Java 11 = 55, Java 8 = 52
+        ls -la logback-android/build/outputs/aar/
+        check logback-android/build/outputs/aar/logback-android-jdk11-release.aar 55
+        check logback-android/build/outputs/aar/logback-android-jdk8-release.aar 52
+
+    - name: Lint
+      run: ./gradlew lint
+
+    - name: Unit tests (jdk11 variant)
+      run: ./gradlew testJdk11DebugUnitTest
+
+    - name: Unit tests (jdk8 variant)
+      run: ./gradlew testJdk8DebugUnitTest
+
+    - name: Upload test reports
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: test-reports-jdk${{ matrix.java }}
+        path: logback-android/build/reports/
+
+    - name: Upload release AARs
+      if: matrix.java == 21
+      uses: actions/upload-artifact@v7
+      with:
+        name: release-aars
+        path: logback-android/build/outputs/aar/
+
