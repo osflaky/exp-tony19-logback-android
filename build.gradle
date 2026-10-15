@@ -1,0 +1,37 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath "com.android.tools.build:gradle:${agpVersion}"
+
+    // NOTE: Do not place your application dependencies here; they belong
+    // in the individual module build.gradle files
+  }
+}
+plugins {
+  id 'io.github.gradle-nexus.publish-plugin' version '2.0.0'
+  id 'maven-publish'
+  id 'com.github.hierynomus.license' version '0.16.1'
+  // Automatically retries failed tests. A handful of logback-core's async
+  // appender/rolling tests are timing-sensitive and can flake on CI; retrying
+  // only the failed tests keeps the build stable without masking genuine
+  // failures (a truly broken test fails all attempts).
+  id 'org.gradle.test-retry' version '1.6.5' apply false
+}
+apply from: "${rootDir}/gradle/publish-root.gradle"
+
+allprojects {
+  repositories {
+    google()
+    mavenCentral()
+    maven { url 'https://oss.sonatype.org/content/repositories/snapshots' }
+  }
+}
+
+task clean(type: Delete) {
+  delete rootProject.layout.buildDirectory
+}
